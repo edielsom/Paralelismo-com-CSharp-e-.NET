@@ -1,9 +1,11 @@
 ﻿using ByteBank.Core.Model;
 using ByteBank.Core.Repository;
 using ByteBank.Core.Service;
+using ByteBank.View.Ultis;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -24,33 +26,65 @@ namespace ByteBank.View
 
         private async void BtnProcessar_Click(object sender, RoutedEventArgs e)
         {
-            var taskSchedulerUI = TaskScheduler.FromCurrentSynchronizationContext();
+
+
             BtnProcessar.IsEnabled = false;
 
+            // Retorna o total de contas a serem processadas.
             var contas = r_Repositorio.GetContaClientes();
 
-            AtualizarView(new List<string>(), TimeSpan.Zero);
 
+            // Obtêm o total de contas que serão processadas e coloca no progressBar.
+            PgsProgresso.Maximum = contas.Count();
+
+
+            // Limpa os controles.
+            LimparView();
+
+            // Obtem o horário de início.
             var inicio = DateTime.Now;
 
-            var resultado = await ConsolidarContas(contas);
+            /* reescrever e entender como funciona uma classe Progress do .NET */
+            //var byteBankProgress = new ByteBankProgress<String>(str => PgsProgresso.Value++);
 
+            var progress = new Progress<String>(str => PgsProgresso.Value++);
+            // Efetua o processamento em uma thread.
+            var resultado = await ConsolidarContas(contas, progress);
+
+            // Obtêm o horário final do processamento.
             var fim = DateTime.Now;
+
+            // Atualiza os dados para o usuário.
             AtualizarView(resultado, fim - inicio);
             BtnProcessar.IsEnabled = true;
 
         }
 
-
-        private async Task<string[]> ConsolidarContas(IEnumerable<ContaCliente> contas)
+        private void LimparView()
         {
-            var resultado = new List<string>();
+            LstResultados.ItemsSource = null;
+            TxtTempo.Text = null;
+            PgsProgresso.Value = 0;
+        }
 
+        private async Task<string[]> ConsolidarContas(IEnumerable<ContaCliente> contas, IProgress<String> reportadorDeProgresso)
+        {
+
+            // Faz o processamento através de Thread.
             var tasks = contas.Select(conta =>
-                 Task.Factory.StartNew(() =>   r_Servico.ConsolidarMovimentacao(conta)));
+                 Task.Factory.StartNew(() =>
+                 {
+                     var resultadoConsolidacao = r_Servico.ConsolidarMovimentacao(conta);
+          
+                     // Implementa a interface IProgress.
+                     reportadorDeProgresso.Report(resultadoConsolidacao);
+                     return resultadoConsolidacao;
+                 })
+                 );
 
             return await Task.WhenAll(tasks);
         }
+
         private void AtualizarView(IEnumerable<string> result, TimeSpan elapsedTime)
         {
             var tempoDecorrido = $"{ elapsedTime.Seconds }.{ elapsedTime.Milliseconds} segundos!";
@@ -60,72 +94,5 @@ namespace ByteBank.View
             TxtTempo.Text = mensagem;
         }
 
-        #region Métodos das aulas anteriores
-        private void BtnProcessar_Click_1(object sender, RoutedEventArgs e)
-        {
-            var taskSchedulerUI = TaskScheduler.FromCurrentSynchronizationContext();
-            BtnProcessar.IsEnabled = false;
-
-            var contas = r_Repositorio.GetContaClientes();
-
-            var resultado = new List<string>();
-
-            AtualizarView(new List<string>(), TimeSpan.Zero);
-
-            var inicio = DateTime.Now;
-
-
-            // Task.Factory.StartNew -> Gerencia as thread automáticamente.
-            var contasTarefas = contas.Select(conta =>
-            {
-                return Task.Factory.StartNew(() =>
-                {
-                    var resultadoConta = r_Servico.ConsolidarMovimentacao(conta);
-                    resultado.Add(resultadoConta);
-                });
-            }).ToArray();
-
-            //Task.WaitAll(contasTarefas); // Para a aplicação e espera até que todas thread termine.
-
-            Task.WhenAll(contasTarefas) // Consiste em retornar uma tarefa que espera o término de todas as demais recebidas por parâmetro
-                .ContinueWith(task =>
-                {
-                    var fim = DateTime.Now;
-                    AtualizarView(resultado, fim - inicio);
-                }, taskSchedulerUI)
-                .ContinueWith(task =>
-                {
-                    BtnProcessar.IsEnabled = true;
-                }, taskSchedulerUI);
-
-        }
-
-        private void BtnProcessar_Click_2(object sender, RoutedEventArgs e)
-        {
-            var taskSchedulerUI = TaskScheduler.FromCurrentSynchronizationContext();
-            BtnProcessar.IsEnabled = false;
-
-            var contas = r_Repositorio.GetContaClientes();
-
-            AtualizarView(new List<string>(), TimeSpan.Zero);
-
-            var inicio = DateTime.Now;
-
-            //Task.WaitAll(contasTarefas); // Para a aplicação e espera até que todas thread termine.
-
-            ConsolidarContas(contas) // Consiste em retornar uma tarefa que espera o término de todas as demais recebidas por parâmetro
-                .ContinueWith(task =>
-                {
-                    var fim = DateTime.Now;
-                    var resultado = task.Result;
-                    AtualizarView(resultado, fim - inicio);
-                }, taskSchedulerUI)
-                .ContinueWith(task =>
-                {
-                    BtnProcessar.IsEnabled = true;
-                }, taskSchedulerUI);
-
-        }
-        #endregion
     }
 }
